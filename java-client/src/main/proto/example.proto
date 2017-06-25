@@ -1,0 +1,54 @@
+syntax = "proto3"; // switch to proto3
+
+package com.altf4.grpc;
+
+// Java options
+option java_package = "com.altf4.grpc";
+option java_multiple_files = true;
+
+// Go options
+option go_package = "pb";
+
+service Example {
+    // Hello is a simple request/response call, similar to HTTP REST APIs.
+    rpc Hello(HelloRequest) returns (HelloResponse) {};
+
+    // Ticker is a streaming API, where the client initiates the stream
+    // and then receives and endless stream of responses.
+    rpc Ticker(TickerRequest) returns (stream TickerResponse) {}
+}
+
+// Gender is an example of enumeration values in proto.
+enum Gender {
+    UNSPECIFIED = 0; // always use a zero value here
+    MALE = 1;
+    FEMALE = 2;
+}
+
+// HelloRequest is a simple RPC request.
+message HelloRequest {
+    string name = 1;
+    int32 age = 2;
+    int64 nanos = 3;
+    repeated string tags = 4;
+    map<string, string> properties = 5;
+    Gender gender = 6;
+    bool online = 7;
+}
+
+// HelloResponse is a simple RPC response.
+message HelloResponse {
+    string message = 1;
+}
+
+// TickerRequest initiates the streaming Ticker API.
+message TickerRequest {
+    string timezone = 1;
+    int64 interval = 2;
+}
+
+// TickerResponse is a response sent back from the server to the client,
+// in a streaming manner.
+message TickerResponse {
+    string tick = 1;
+}

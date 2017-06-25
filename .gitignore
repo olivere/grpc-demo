@@ -1,0 +1,44 @@
+# Compiled Object files, Static and Dynamic libs (Shared Objects)
+*.o
+*.a
+*.so
+
+# Folders
+_obj
+_test
+
+# Architecture specific extensions/prefixes
+*.[568vq]
+[568vq].out
+
+*.cgo1.go
+*.cgo2.c
+_cgo_defun.c
+_cgo_gotypes.go
+_cgo_export.*
+.DS_Store
+
+_testmain.go
+
+*.exe
+*.test
+*.prof
+*.pid
+*.coverprofile
+.DS_Store
+.idea/
+.vscode/
+
+*.key
+*.pem
+*.log
+
+.env
+.env.local
+.env.remote
+node_modules
+npm-debug.log
+trace.log
+/go-client/go-client
+/go-server/go-server
+vendor/
