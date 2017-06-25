@@ -2,6 +2,7 @@ package main
 
 import (
 	grpcretry "github.com/grpc-ecosystem/go-grpc-middleware/retry"
+	grpcprom "github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 	"golang.org/x/time/rate"
@@ -67,6 +68,10 @@ func NewClient(options ...ClientOption) (*Client, error) {
 	}
 	opts = append(opts, grpc.WithStreamInterceptor(grpcretry.StreamClientInterceptor(retrycallopts...)))
 	opts = append(opts, grpc.WithUnaryInterceptor(grpcretry.UnaryClientInterceptor(retrycallopts...)))
+
+	// Monitoring via Prometheus
+	opts = append(opts, grpc.WithUnaryInterceptor(grpcprom.UnaryClientInterceptor))
+	opts = append(opts, grpc.WithStreamInterceptor(grpcprom.StreamClientInterceptor))
 
 	conn, err := grpc.Dial(client.addr, opts...)
 	if err != nil {

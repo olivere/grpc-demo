@@ -1,0 +1,25 @@
+global:
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  evaluation_interval: 15s
+  external_labels:
+    monitor: 'mall'
+
+rule_files:
+
+scrape_configs:
+- job_name: prometheus
+
+  honor_labels: true
+  # scrape_interval is defined by the configured global (15s).
+  # scrape_timeout is defined by the global default (10s).
+
+  # metrics_path defaults to '/metrics'
+  # scheme defaults to 'http'.
+
+- job_name: grpc-demo
+  metrics_path: /metrics
+  scrape_interval: 5s
+  static_configs:
+    - targets:
+      - localhost:10000

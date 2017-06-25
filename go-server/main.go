@@ -6,11 +6,18 @@ import (
 	"flag"
 	stdlog "log"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/go-kit/kit/log"
+	grpcmw "github.com/grpc-ecosystem/go-grpc-middleware"
+	grpcauth "github.com/grpc-ecosystem/go-grpc-middleware/auth"
+	grpcopentracing "github.com/grpc-ecosystem/go-grpc-middleware/tracing/opentracing"
+	grpcprom "github.com/grpc-ecosystem/go-grpc-prometheus"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/soheilhy/cmux"
 	"golang.org/x/time/rate"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -64,13 +71,43 @@ func main() {
 	opts = append(opts, grpc.MaxRecvMsgSize(1<<20)) // 1MB
 	opts = append(opts, grpc.InTapHandle(tap.Handle))
 
+	// Prometheus
+	opts = append(opts, grpc.StreamInterceptor(grpcmw.ChainStreamServer(
+		grpcprom.StreamServerInterceptor,
+		grpcopentracing.StreamServerInterceptor(),
+		grpcauth.StreamServerInterceptor(authenticate),
+	)))
+	opts = append(opts, grpc.UnaryInterceptor(grpcmw.ChainUnaryServer(
+		grpcprom.UnaryServerInterceptor,
+		grpcopentracing.UnaryServerInterceptor(),
+		grpcauth.UnaryServerInterceptor(authenticate),
+	)))
+
 	grpcServer := grpc.NewServer(opts...)
 	pb.RegisterExampleServer(grpcServer, srv)
+	grpcprom.Register(grpcServer)
+
+	http.Handle("/metrics", prometheus.Handler())
+
+	// Multiplex connections
+	m := cmux.New(lis)
+	grpclis := m.Match(cmux.HTTP2HeaderField("content-type", "application/grpc"))
+	httplis := m.Match(cmux.HTTP1Fast())
 
 	errc := make(chan error, 1)
 	go func() {
-		logger.Log("msg", "Server started")
-		errc <- grpcServer.Serve(lis)
+		errc <- grpcServer.Serve(grpclis)
+	}()
+
+	go func() {
+		httpsrv := &http.Server{
+			Addr: *addr,
+		}
+		errc <- httpsrv.Serve(httplis)
+	}()
+
+	go func() {
+		errc <- m.Serve()
 	}()
 
 	go func() {
@@ -79,6 +116,8 @@ func main() {
 		<-c
 		errc <- nil
 	}()
+
+	logger.Log("msg", "Server started")
 
 	if err := <-errc; err != nil {
 		logger.Log("msg", "Exit with failure", "err", err)

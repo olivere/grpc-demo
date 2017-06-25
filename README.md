@@ -5,6 +5,14 @@ languages, under different configurations etc.
 
 # Configurations
 
+## Monitoring with Prometheus
+
+You can monitor the go-server with Prometheus. It pulls the
+metrics from the `/metrics` endpoint of the server.
+
+
+
+
 ## Load balancing with etcd
 
 When a server starts up, it registers itself with etcd.

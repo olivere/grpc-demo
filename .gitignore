@@ -39,6 +39,7 @@ _testmain.go
 node_modules
 npm-debug.log
 trace.log
+/data/
 /go-client/go-client
 /go-server/go-server
 vendor/

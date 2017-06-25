@@ -51,7 +51,7 @@ func (h *TapHandler) Handle(ctx context.Context, info *tap.Info) (context.Contex
 	h.metrics.IncrementCalls(1)
 
 	// Rate limiter per user
-	user, ok := getUserFromMetadata(ctx)
+	user, ok := extractUserFromMD(ctx)
 	if !ok {
 		return nil, status.Error(codes.Unauthenticated,
 			"client didn't pass a user")
