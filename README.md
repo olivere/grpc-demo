@@ -10,8 +10,9 @@ languages, under different configurations etc.
 You can monitor the go-server with Prometheus. It pulls the
 metrics from the `/metrics` endpoint of the server.
 
-
-
+```
+$ prometheus -config.file=etc/prometheus.yml
+```
 
 ## Load balancing with etcd
 

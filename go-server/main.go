@@ -26,6 +26,14 @@ import (
 	pb "github.com/olivere/grpc-demo/pb"
 )
 
+var (
+	_ = grpcmw.ChainStreamServer
+	_ = grpcauth.StreamServerInterceptor
+	_ = grpcopentracing.StreamServerInterceptor
+	_ = grpcprom.Register
+	_ = cmux.Any
+)
+
 func main() {
 	var (
 		addr     = flag.String("addr", ":10000", "Host and port to bind to")
@@ -68,10 +76,10 @@ func main() {
 	)
 
 	// Common options
-	opts = append(opts, grpc.MaxRecvMsgSize(1<<20)) // 1MB
+	// opts = append(opts, grpc.MaxRecvMsgSize(1<<20)) // 1MB
 	opts = append(opts, grpc.InTapHandle(tap.Handle))
 
-	// Prometheus
+	// gRPC middleware
 	opts = append(opts, grpc.StreamInterceptor(grpcmw.ChainStreamServer(
 		grpcprom.StreamServerInterceptor,
 		grpcopentracing.StreamServerInterceptor(),
@@ -91,7 +99,7 @@ func main() {
 
 	// Multiplex connections
 	m := cmux.New(lis)
-	grpclis := m.Match(cmux.HTTP2HeaderField("content-type", "application/grpc"))
+	grpclis := m.Match(cmux.HTTP2())
 	httplis := m.Match(cmux.HTTP1Fast())
 
 	errc := make(chan error, 1)

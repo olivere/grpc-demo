@@ -18,7 +18,7 @@ public class HelloCommand {
         this.client = client;
     }
 
-    public void run() {
+    public void run() throws InterruptedException {
         HelloRequest helloRequest = HelloRequest.newBuilder()
                 .setName("Oliver")
                 .setAge(23)
@@ -26,6 +26,7 @@ public class HelloCommand {
                 .setOnline(true)
                 .build();
         HelloResponse helloResponse = client.hello(helloRequest);
-        System.out.println(helloResponse.getMessage());
+        if (helloResponse != null)
+            System.out.println(helloResponse.getMessage());
     }
 }

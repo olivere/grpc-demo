@@ -85,10 +85,30 @@ public class ExampleClient {
      * @param request Request to initiate the call with
      * @return Response from the RPC call
      */
-    public HelloResponse hello(HelloRequest request) {
-        ExampleGrpc.ExampleBlockingStub stub = createBlockingStub()
-                .withDeadlineAfter(10, TimeUnit.SECONDS);
-        return stub.hello(request);
+    public HelloResponse hello(HelloRequest request) throws InterruptedException {
+        ExampleGrpc.ExampleStub stub = createAsyncStub().withDeadlineAfter(10, TimeUnit.SECONDS);
+        // return stub.hello(request);
+
+        final HelloResponse[] helloResponse = {null};
+        CountDownLatch finishLatch = new CountDownLatch(1);
+        stub.hello(request, new StreamObserver<HelloResponse>() {
+            @Override
+            public void onNext(HelloResponse response) {
+                helloResponse[0] = response;
+            }
+
+            @Override
+            public void onError(Throwable throwable) {
+                finishLatch.countDown();
+            }
+
+            @Override
+            public void onCompleted() {
+                finishLatch.countDown();
+            }
+        });
+        finishLatch.await();
+        return helloResponse[0];
     }
 
     public void ticker(TimeZone tz, long intervalNanos, Consumer<String> callback) throws InterruptedException {
