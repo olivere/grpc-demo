@@ -1,5 +1,7 @@
 package com.altf4.grpc.client;
 
+import io.grpc.Context;
+
 import java.util.TimeZone;
 import java.util.concurrent.TimeUnit;
 
@@ -15,8 +17,12 @@ public class TickerCommand {
 
     public void run() {
         long intervalNanos = TimeUnit.NANOSECONDS.convert(1, TimeUnit.SECONDS);
-        client.ticker(TimeZone.getDefault(), intervalNanos, (String message) -> {
-            System.out.println(message);
-        });
+        try {
+            client.ticker(TimeZone.getDefault(), intervalNanos, (String message) -> {
+                System.out.println(message);
+            });
+        } catch (InterruptedException e) {
+            System.err.println(e.getMessage());
+        }
     }
 }

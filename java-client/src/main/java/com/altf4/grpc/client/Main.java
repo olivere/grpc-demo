@@ -1,10 +1,13 @@
 package com.altf4.grpc.client;
 
 import io.grpc.ManagedChannelBuilder;
+import io.grpc.netty.GrpcSslContexts;
+import io.grpc.netty.NettyChannelBuilder;
 import org.apache.commons.cli.*;
 
-import java.util.TimeZone;
-import java.util.concurrent.TimeUnit;
+import javax.net.ssl.SSLException;
+import java.io.File;
+import java.util.UUID;
 
 /**
  * Created by oliver on 24.06.17.
@@ -58,9 +61,23 @@ public class Main {
         }
 
         // Create a managed channel to the server
-        ManagedChannelBuilder channelBuilder = ManagedChannelBuilder.forAddress(host, port)
-                .usePlaintext(true);
-        ExampleClient client = new ExampleClient(channelBuilder);
+        ManagedChannelBuilder channelBuilder = NettyChannelBuilder.forAddress(host, port); // ManagedChannelBuilder.forAddress(host, port);
+        if (!cmd.hasOption("tls")) {
+            channelBuilder = channelBuilder.usePlaintext(true);
+        } else {
+            if (cmd.hasOption("caFile")) {
+                try {
+                    channelBuilder = ((NettyChannelBuilder)channelBuilder).sslContext(
+                            GrpcSslContexts.forClient().trustManager(new File(cmd.getOptionValue("caFile"))).build()
+                    );
+                } catch (SSLException e) {
+                    throw new IllegalArgumentException("Unable to prepare SSL context from caFile: " + e.getMessage());
+                }
+            }
+        }
+
+        Credentials creds = new Credentials(UUID.randomUUID().toString());
+        ExampleClient client = new ExampleClient(channelBuilder, creds);
 
         switch (cmd.getArgList().stream().findFirst().orElse("hello")) {
             case "hello":

@@ -4,17 +4,17 @@ package main
 
 import (
 	"flag"
-	"fmt"
+	stdlog "log"
 	"net"
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/go-kit/kit/log"
-	"golang.org/x/net/context"
+	"golang.org/x/time/rate"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/grpclog"
 
 	pb "github.com/olivere/grpc-demo/pb"
 )
@@ -25,12 +25,17 @@ func main() {
 		tls      = flag.Bool("tls", false, "Enabled TLS")
 		certFile = flag.String("cert", "", "Certificate file")
 		keyFile  = flag.String("key", "", "Key file")
+		qps      = flag.Float64("qps", 5, "Queries per second in rate limiter")
+		burst    = flag.Int("burst", 1, "Burst in rate limiter")
 	)
 	flag.Parse()
 
 	logger := log.NewLogfmtLogger(os.Stdout)
 	logger = log.With(logger, "@time", log.DefaultTimestamp)
 	logger = log.With(logger, "caller", log.DefaultCaller)
+	stdlog.SetFlags(0)
+	stdlog.SetOutput(log.NewStdlibAdapter(logger))
+	grpclog.SetLogger(grpcLogger{logger})
 
 	srv := NewServer(logger)
 
@@ -48,6 +53,17 @@ func main() {
 		}
 		opts = append(opts, grpc.Creds(creds))
 	}
+
+	tap := NewTapHandler(
+		NewMetrics(),
+		rate.Limit(*qps),
+		*burst,
+	)
+
+	// Common options
+	opts = append(opts, grpc.MaxRecvMsgSize(1<<20)) // 1MB
+	opts = append(opts, grpc.InTapHandle(tap.Handle))
+
 	grpcServer := grpc.NewServer(opts...)
 	pb.RegisterExampleServer(grpcServer, srv)
 
@@ -66,66 +82,5 @@ func main() {
 
 	if err := <-errc; err != nil {
 		logger.Log("msg", "Exit with failure", "err", err)
-	}
-}
-
-type Server struct {
-	log.Logger
-}
-
-func NewServer(logger log.Logger) *Server {
-	return &Server{
-		Logger: log.With(logger, "component", "server"),
-	}
-}
-
-func (s *Server) Hello(ctx context.Context, req *pb.HelloRequest) (*pb.HelloResponse, error) {
-	s.Log("msg", "received request", "name", req.Name)
-
-	var gender string
-	switch req.Gender {
-	case pb.Gender_MALE:
-		gender = "male person"
-	case pb.Gender_FEMALE:
-		gender = "female person"
-	default:
-		gender = "person of an unknown gender"
-	}
-	msg := fmt.Sprintf("%s: Hello %s, you are a %d year old %s.",
-		time.Now().Format(time.RFC3339),
-		req.Name,
-		req.Age,
-		gender,
-	)
-	return &pb.HelloResponse{
-		Message: msg,
-	}, nil
-}
-
-func (s *Server) Ticker(req *pb.TickerRequest, stream pb.Example_TickerServer) error {
-	logger := log.With(s, "method", "Ticker")
-
-	loc, err := time.LoadLocation(req.Timezone)
-	if err != nil {
-		logger.Log("err", err)
-		return err
-	}
-	ticker := time.NewTicker(time.Duration(req.Interval) * time.Nanosecond)
-	defer ticker.Stop()
-
-	ctx := stream.Context()
-	for {
-		select {
-		case <-ticker.C:
-			err := stream.Send(&pb.TickerResponse{
-				Tick: time.Now().In(loc).Format(time.RFC3339),
-			})
-			if err != nil {
-				logger.Log("err", err)
-				return err
-			}
-		case <-ctx.Done():
-			return ctx.Err()
-		}
 	}
 }

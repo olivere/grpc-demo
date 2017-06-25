@@ -7,10 +7,11 @@ import (
 	"os"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	"golang.org/x/net/context"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
+	"golang.org/x/sync/errgroup"
+	"golang.org/x/time/rate"
 
 	pb "github.com/olivere/grpc-demo/pb"
 )
@@ -22,6 +23,11 @@ type tickerCommand struct {
 	serverName string
 	caFile     string
 	interval   time.Duration
+	timezone   string
+	qps        float64
+	burst      int
+	maxRetries uint
+	parallel   int
 }
 
 func init() {
@@ -32,6 +38,11 @@ func init() {
 		flags.StringVar(&cmd.serverName, "serverName", "", "Server to check the certificate")
 		flags.StringVar(&cmd.caFile, "caFile", "", "Certificate file in e.g. PEM format")
 		flags.DurationVar(&cmd.interval, "interval", 1*time.Second, "Time interval between ticker responses")
+		flags.StringVar(&cmd.timezone, "tz", time.Local.String(), "Timezone to pass to ticker")
+		flags.Float64Var(&cmd.qps, "qps", 0.0, "Rate limit for queries of seconds")
+		flags.IntVar(&cmd.burst, "burst", 0, "Rate limiter bursts")
+		flags.UintVar(&cmd.maxRetries, "retries", 5, "Number of retries when hitting rate limits")
+		flags.IntVar(&cmd.parallel, "parallel", 1, "Number of requests to send in parallel (e.g. to test rate limiting)")
 		return cmd
 	})
 }
@@ -47,57 +58,60 @@ func (cmd *tickerCommand) Usage() {
 func (cmd *tickerCommand) Examples() []string {
 	return []string{
 		fmt.Sprintf("%s ticker -addr=localhost:10000 -interval=5s", os.Args[0]),
+		fmt.Sprintf("%s ticker -interval=5s -tz=Europe/London", os.Args[0]),
 	}
 }
 
 func (cmd *tickerCommand) Run(args []string) error {
-	var opts []grpc.DialOption
-	if cmd.tls {
-		var sn string
-		if cmd.serverName != "" {
-			sn = cmd.serverName
-		}
-		var creds credentials.TransportCredentials
-		if cmd.caFile != "" {
-			var err error
-			creds, err = credentials.NewClientTLSFromFile(cmd.caFile, sn)
-			if err != nil {
-				return errors.Wrap(err, "cannot read TLS credentials")
-			}
-		} else {
-			creds = credentials.NewClientTLSFromCert(nil, sn)
-		}
-		opts = append(opts, grpc.WithTransportCredentials(creds))
-	} else {
-		opts = append(opts, grpc.WithInsecure())
+	options := []ClientOption{
+		SetAddr(cmd.addr),
+		SetTLS(cmd.tls),
+		SetServerName(cmd.serverName),
+		SetCAFile(cmd.caFile),
+		SetMaxRetries(cmd.maxRetries),
 	}
-
-	conn, err := grpc.Dial(cmd.addr, opts...)
+	if cmd.qps > 0 && cmd.burst > 0 {
+		limiter := rate.NewLimiter(rate.Limit(cmd.qps), cmd.burst)
+		options = append(options, SetRateLimiter(limiter))
+	}
+	client, err := NewClient(options...)
 	if err != nil {
-		return errors.Wrapf(err, "cannot connect to %s", cmd.addr)
+		return err
 	}
-	defer conn.Close()
-
-	client := pb.NewExampleClient(conn)
+	defer client.Close()
 
 	ctx := context.Background()
-	req := &pb.TickerRequest{
-		Interval: cmd.interval.Nanoseconds(),
-	}
-	stream, err := client.Ticker(ctx, req)
-	if err != nil {
-		return errors.Wrap(err, "cannot retrieve stream")
+	// Set user
+	ctx = setUser(ctx, uuid.New().String())
+
+	if cmd.parallel <= 0 {
+		cmd.parallel = 1
 	}
 
-	for {
-		res, err := stream.Recv()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return errors.Wrap(err, "stream failed")
-		}
-		fmt.Println(res.Tick)
+	g, ctx := errgroup.WithContext(ctx)
+
+	for i := 0; i < cmd.parallel; i++ {
+		g.Go(func() error {
+			req := &pb.TickerRequest{
+				Timezone: cmd.timezone,
+				Interval: cmd.interval.Nanoseconds(),
+			}
+			stream, err := client.Ticker(ctx, req)
+			if err != nil {
+				return errors.Wrap(err, "initiate stream")
+			}
+			for {
+				res, err := stream.Recv()
+				if err == io.EOF {
+					break
+				}
+				if err != nil {
+					return errors.Wrap(err, "unexpected stream error")
+				}
+				fmt.Println(res.Tick)
+			}
+			return nil
+		})
 	}
-	return nil
+	return g.Wait()
 }

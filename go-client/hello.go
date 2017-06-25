@@ -7,10 +7,10 @@ import (
 	"os"
 	"time"
 
-	"github.com/pkg/errors"
+	"github.com/google/uuid"
 	"golang.org/x/net/context"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
+	"golang.org/x/sync/errgroup"
+	"golang.org/x/time/rate"
 
 	pb "github.com/olivere/grpc-demo/pb"
 )
@@ -21,6 +21,11 @@ type helloCommand struct {
 	tls        bool
 	serverName string
 	caFile     string
+	timeout    time.Duration
+	qps        float64
+	burst      int
+	maxRetries uint
+	parallel   int
 }
 
 func init() {
@@ -30,6 +35,11 @@ func init() {
 		flags.BoolVar(&cmd.tls, "tls", false, "Enable TLS")
 		flags.StringVar(&cmd.serverName, "serverName", "", "Server to check the certificate")
 		flags.StringVar(&cmd.caFile, "caFile", "", "Certificate file in e.g. PEM format")
+		flags.DurationVar(&cmd.timeout, "timeout", 10*time.Second, "Timeout for call")
+		flags.Float64Var(&cmd.qps, "qps", 0.0, "Rate limit for queries of seconds")
+		flags.IntVar(&cmd.burst, "burst", 0, "Rate limiter bursts")
+		flags.UintVar(&cmd.maxRetries, "retries", 5, "Number of retries when hitting rate limits")
+		flags.IntVar(&cmd.parallel, "parallel", 1, "Number of requests to send in parallel (e.g. to test rate limiting)")
 		return cmd
 	})
 }
@@ -49,50 +59,54 @@ func (cmd *helloCommand) Examples() []string {
 */
 
 func (cmd *helloCommand) Run(args []string) error {
-	var opts []grpc.DialOption
-	if cmd.tls {
-		var sn string
-		if cmd.serverName != "" {
-			sn = cmd.serverName
-		}
-		var creds credentials.TransportCredentials
-		if cmd.caFile != "" {
-			var err error
-			creds, err = credentials.NewClientTLSFromFile(cmd.caFile, sn)
-			if err != nil {
-				return errors.Wrap(err, "cannot read TLS credentials")
-			}
-		} else {
-			creds = credentials.NewClientTLSFromCert(nil, sn)
-		}
-		opts = append(opts, grpc.WithTransportCredentials(creds))
-	} else {
-		opts = append(opts, grpc.WithInsecure())
+	options := []ClientOption{
+		SetAddr(cmd.addr),
+		SetTLS(cmd.tls),
+		SetServerName(cmd.serverName),
+		SetCAFile(cmd.caFile),
+		SetMaxRetries(cmd.maxRetries),
 	}
-
-	conn, err := grpc.Dial(cmd.addr, opts...)
-	if err != nil {
-		return errors.Wrapf(err, "cannot connect to %s", cmd.addr)
+	if cmd.qps > 0 && cmd.burst > 0 {
+		limiter := rate.NewLimiter(rate.Limit(cmd.qps), cmd.burst)
+		options = append(options, SetRateLimiter(limiter))
 	}
-	defer conn.Close()
-
-	client := pb.NewExampleClient(conn)
-
-	ctx := context.Background()
-
-	req := &pb.HelloRequest{
-		Name:   names[rand.Intn(len(names))],
-		Age:    int32(20 + rand.Intn(20)),
-		Nanos:  time.Now().UnixNano(),
-		Gender: randomGender(),
-	}
-	res, err := client.Hello(ctx, req)
+	client, err := NewClient(options...)
 	if err != nil {
 		return err
 	}
-	fmt.Println(res.Message)
+	defer client.Close()
 
-	return nil
+	ctx := context.Background()
+	// Set user
+	ctx = setUser(ctx, uuid.New().String())
+	// Add timeout
+	ctx, cancel := context.WithTimeout(ctx, cmd.timeout)
+	defer cancel()
+
+	if cmd.parallel <= 0 {
+		cmd.parallel = 1
+	}
+
+	g, ctx := errgroup.WithContext(ctx)
+
+	for i := 0; i < cmd.parallel; i++ {
+		g.Go(func() error {
+			req := &pb.HelloRequest{
+				Name:   names[rand.Intn(len(names))],
+				Age:    int32(20 + rand.Intn(20)),
+				Nanos:  time.Now().UnixNano(),
+				Gender: randomGender(),
+			}
+			res, err := client.Hello(ctx, req)
+			if err != nil {
+				return err
+			}
+			fmt.Println(res.Message)
+			return nil
+		})
+	}
+
+	return g.Wait()
 }
 
 func randomGender() pb.Gender {
