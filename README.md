@@ -5,6 +5,38 @@ languages, under different configurations etc.
 
 # Configurations
 
+## Running with TLS
+
+We have two modes of operation. When `-tls` is specified, we only serve via TLS.
+As the server both serves gRPC as well as HTTP endpoints (e.g. Prometheus metrics
+via the `/metrics` endpoint), we are either serving fully encrypted or not encrypted
+at all.
+
+Here's how to start a TLS-based server and client:
+
+```
+$ cd go-server
+$ go build
+$ ./go-server -tls -cert=../etc/grpc-demo.go.pem -key=../etc/grpc-demo.go.key -addr=grpc-demo.go:10000
+```
+
+```
+$ cd go-client
+$ go build
+$ ./go-client hello -tls -caFile=../etc/grpc-demo.go.pem -addr=grpc-demo.go:10000
+```
+
+```
+$ cd java-client
+$ mvn compile
+$ ./java-client hello -tls -caFile=../etc/grpc-demo.go.pem -addr=grpc-demo.go:1000
+```
+
+Notice that there is a small Ruby script in `./etc/create-cert.rb` that will
+generate the necessary certificates for you.
+Also watch [github.com/denji/golang-tls](https://github.com/denji/golang-tls)
+for more information about Go and TLS.
+
 ## Monitoring with Prometheus
 
 You can monitor the go-server with Prometheus. It pulls the

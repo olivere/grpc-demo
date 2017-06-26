@@ -86,9 +86,11 @@ public class ExampleClient {
      * @return Response from the RPC call
      */
     public HelloResponse hello(HelloRequest request) throws InterruptedException {
-        ExampleGrpc.ExampleStub stub = createAsyncStub().withDeadlineAfter(10, TimeUnit.SECONDS);
-        // return stub.hello(request);
+        ExampleGrpc.ExampleBlockingStub stub = createBlockingStub().withDeadlineAfter(10, TimeUnit.SECONDS);
+        return stub.hello(request);
 
+        /*
+        ExampleGrpc.ExampleStub stub = createAsyncStub().withDeadlineAfter(10, TimeUnit.SECONDS);
         final HelloResponse[] helloResponse = {null};
         CountDownLatch finishLatch = new CountDownLatch(1);
         stub.hello(request, new StreamObserver<HelloResponse>() {
@@ -109,6 +111,7 @@ public class ExampleClient {
         });
         finishLatch.await();
         return helloResponse[0];
+        */
     }
 
     public void ticker(TimeZone tz, long intervalNanos, Consumer<String> callback) throws InterruptedException {

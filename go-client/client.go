@@ -1,6 +1,11 @@
 package main
 
 import (
+	"crypto/x509"
+	"io/ioutil"
+	"net"
+	"time"
+
 	"github.com/coreos/etcd/clientv3"
 	etcdnaming "github.com/coreos/etcd/clientv3/naming"
 	grpcretry "github.com/grpc-ecosystem/go-grpc-middleware/retry"
@@ -11,8 +16,6 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
-
-	"time"
 
 	pb "github.com/olivere/grpc-demo/pb"
 )
@@ -47,21 +50,27 @@ func NewClient(options ...ClientOption) (*Client, error) {
 	}
 
 	var opts []grpc.DialOption
+
+	// Configure TLS
 	if client.tls {
+		cert, err := ioutil.ReadFile(client.caFile)
+		if err != nil {
+			return nil, errors.Wrap(err, "cannot read caFile")
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(cert) {
+			return nil, errors.New("failed to append certificate to pool")
+		}
 		var sn string
 		if client.serverName != "" {
 			sn = client.serverName
-		}
-		var creds credentials.TransportCredentials
-		if client.caFile != "" {
-			var err error
-			creds, err = credentials.NewClientTLSFromFile(client.caFile, sn)
-			if err != nil {
-				return nil, errors.Wrap(err, "cannot read TLS credentials")
-			}
 		} else {
-			creds = credentials.NewClientTLSFromCert(nil, sn)
+			sn, _, err = net.SplitHostPort(client.addr)
+			if err != nil {
+				return nil, errors.Wrap(err, "cannot split address into host and port")
+			}
 		}
+		creds := credentials.NewClientTLSFromCert(pool, sn)
 		opts = append(opts, grpc.WithTransportCredentials(creds))
 	} else {
 		opts = append(opts, grpc.WithInsecure())
@@ -79,6 +88,7 @@ func NewClient(options ...ClientOption) (*Client, error) {
 	opts = append(opts, grpc.WithUnaryInterceptor(grpcprom.UnaryClientInterceptor))
 	opts = append(opts, grpc.WithStreamInterceptor(grpcprom.StreamClientInterceptor))
 
+	// Load balancing and service discovery
 	var err error
 	var conn *grpc.ClientConn
 	if client.etcdcli != nil {
@@ -86,8 +96,9 @@ func NewClient(options ...ClientOption) (*Client, error) {
 		resolver := &etcdnaming.GRPCResolver{Client: client.etcdcli}
 		balancer := grpc.RoundRobin(resolver)
 		opts = append(opts, grpc.WithBalancer(balancer))
+		// Block until we connect is necessary for etcd
 		opts = append(opts, grpc.WithBlock()) // see https://github.com/coreos/etcd/issues/7821
-		opts = append(opts, grpc.WithTimeout(60*time.Second))
+		opts = append(opts, grpc.WithTimeout(10*time.Second))
 		conn, err = grpc.Dial("grpc-demo-example", opts...)
 		if err != nil {
 			return nil, errors.Wrap(err, "cannot connect to etcd service")

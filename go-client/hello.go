@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/time/rate"
@@ -112,7 +113,7 @@ func (cmd *helloCommand) Run(args []string) error {
 			}
 			res, err := client.Hello(ctx, req)
 			if err != nil {
-				return err
+				return errors.Wrap(err, "cannot execute Hello request")
 			}
 			fmt.Println(res.Message)
 			return nil

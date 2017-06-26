@@ -1,14 +1,17 @@
 package com.altf4.grpc.client;
 
+import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
 import io.grpc.netty.GrpcSslContexts;
+import io.grpc.netty.NegotiationType;
 import io.grpc.netty.NettyChannelBuilder;
-import io.netty.handler.ssl.SslContextBuilder;
+import io.netty.handler.ssl.SslContext;
 import org.apache.commons.cli.*;
 
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLException;
 import java.io.File;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -19,7 +22,7 @@ public class Main {
         // Prepare and parse command line
         CommandLineParser parser = new DefaultParser();
         Options options = new Options();
-        options.addOption("help", "h", false,"Print help");
+        options.addOption("h", "help", false,"Print help");
         options.addOption("addr", true, "Server address, e.g. localhost:10000");
         options.addOption("tls", false, "Enable TLS");
         options.addOption("serverName", true, "Server to check the certificate");
@@ -30,6 +33,7 @@ public class Main {
         try {
             cmd = parser.parse(options, args);
         } catch (ParseException e) {
+            System.out.println(e.getMessage());
             helpFormatter.printHelp("java-client [options] <hello | ticker>", options);
             System.exit(1);
         }
@@ -62,16 +66,32 @@ public class Main {
             host = serverAddress;
         }
 
+        // TLS server name
+        String serverName;
+        if (cmd.hasOption("serverName")) {
+            serverName = cmd.getOptionValue("serverName");
+        } else {
+            serverName = host;
+        }
+
         // Create a managed channel to the server
-        ManagedChannelBuilder channelBuilder = NettyChannelBuilder.forAddress(host, port); // ManagedChannelBuilder.forAddress(host, port);
+        ManagedChannelBuilder channelBuilder = NettyChannelBuilder
+                .forAddress(host, port)
+                .userAgent("grpc-demo-java-client/1.0");
         if (cmd.hasOption("tls")) {
+            if (!cmd.hasOption("caFile")) {
+                throw new IllegalArgumentException("Missing caFile parameter when TLS is enabled");
+            }
+            File caFile = new File(cmd.getOptionValue("caFile"));
             try {
-                SslContextBuilder sslContextBuilder = GrpcSslContexts.forClient();
-                if (cmd.hasOption("caFile")) {
-                    sslContextBuilder = sslContextBuilder.trustManager(new File(cmd.getOptionValue("caFile")));
-                }
-                NettyChannelBuilder nettyChannelBuilder = (NettyChannelBuilder)channelBuilder;
-                channelBuilder = nettyChannelBuilder.sslContext(sslContextBuilder.build());
+                SslContext sslContext = GrpcSslContexts
+                        .forClient()
+                        .trustManager(caFile)
+                        .build();
+                channelBuilder = ((NettyChannelBuilder)channelBuilder)
+                        .overrideAuthority(serverName)
+                        .negotiationType(NegotiationType.TLS)
+                        .sslContext(sslContext);
             } catch (SSLException e) {
                 throw new IllegalArgumentException("Unable to prepare SSL context from caFile: " + e.getMessage());
             }

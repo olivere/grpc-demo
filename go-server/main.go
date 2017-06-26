@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	tlspkg "crypto/tls"
 	"flag"
 	stdlog "log"
 	"net"
@@ -25,7 +26,6 @@ import (
 	"github.com/soheilhy/cmux"
 	"golang.org/x/time/rate"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/grpclog"
 	"google.golang.org/grpc/naming"
 
@@ -114,14 +114,18 @@ func main() {
 	}
 
 	// Server options
+	var cert tlspkg.Certificate
 	var opts []grpc.ServerOption
 	if *tls {
-		creds, err := credentials.NewServerTLSFromFile(*certFile, *keyFile)
+		var err error
+		cert, err = tlspkg.LoadX509KeyPair(*certFile, *keyFile)
 		if err != nil {
-			logger.Log("msg", "Cannot create TLS credentials", "err", err)
+			logger.Log("msg", "Cannot load certificate", "err", err)
 			os.Exit(1)
 		}
-		opts = append(opts, grpc.Creds(creds))
+		// We don't need the instruct gRPC to do TLS because we are using cmux to proxy TLS
+		// creds := credentials.NewServerTLSFromCert(&cert)
+		// opts = append(opts, grpc.Creds(creds))
 	}
 
 	tap := NewTapHandler(
@@ -149,29 +153,58 @@ func main() {
 	grpcServer := grpc.NewServer(opts...)
 	pb.RegisterExampleServer(grpcServer, srv)
 	grpcprom.Register(grpcServer)
+
 	http.Handle("/metrics", prometheus.Handler())
 
 	// Multiplex connections
-	m := cmux.New(lis)
-	grpclis := m.Match(cmux.HTTP2())
-	httplis := m.Match(cmux.HTTP1Fast())
+	//
+	// We have two modes of operating. When TLS is enabled, we serve both gRPC and
+	// HTTP over TLS, i.e. Prometheus metrics are only available via https://.../metrics.
+	//
+	// When TLS is disabled, we are serving both gRPC and HTTP unencrypted.
+	//
+	// Notice that we could change this via recursive multiplexing in cmux:
+	// https://godoc.org/github.com/soheilhy/cmux#ex-package--RecursiveCmux
+	// That would allow us to serve e.g. HTTP over TLS as well as unencrypted.
+	if *tls {
+		tlscfg := &tlspkg.Config{
+			Certificates: []tlspkg.Certificate{cert},
+		}
+		lis = tlspkg.NewListener(lis, tlscfg)
+	}
+	tcpmux := cmux.New(lis)
+	httplis := tcpmux.Match(cmux.HTTP1Fast())
+	grpclis := tcpmux.Match(cmux.Any())
 
 	errc := make(chan error, 1)
+
+	// gRPC listener
 	go func() {
-		errc <- grpcServer.Serve(grpclis)
+		err := grpcServer.Serve(grpclis)
+		if err != cmux.ErrListenerClosed {
+			errc <- err
+		} else {
+			errc <- nil
+		}
 	}()
 
+	// HTTP listener
 	go func() {
 		httpsrv := &http.Server{
 			Addr: *addr,
 		}
-		errc <- httpsrv.Serve(httplis)
+		err := httpsrv.Serve(httplis)
+		if err != cmux.ErrListenerClosed {
+			errc <- err
+		} else {
+			errc <- nil
+		}
 	}()
 
-	go func() {
-		errc <- m.Serve()
-	}()
+	// Start multiplexer
+	go func() { errc <- tcpmux.Serve() }()
 
+	// Wait for Ctrl+C and other signals
 	go func() {
 		c := make(chan os.Signal, 1)
 		signal.Notify(c, syscall.SIGINT, syscall.SIGTERM)
@@ -179,8 +212,19 @@ func main() {
 		errc <- nil
 	}()
 
-	logger.Log("msg", "Server started", "addr", *addr, "disco", *disco)
+	// Log all settings for debugging purposes
+	logger.Log(
+		"msg", "Server started",
+		"addr", *addr,
+		"disco", *disco,
+		"tls", *tls,
+		"certFile", *certFile,
+		"keyFile", *keyFile,
+		"qps", *qps,
+		"burst", *burst,
+	)
 
+	// Wait for completion
 	if err := <-errc; err != nil {
 		logger.Log("msg", "Exit with failure", "err", err)
 	}

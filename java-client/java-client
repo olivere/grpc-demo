@@ -1,2 +1,2 @@
 #!/bin/sh
-mvn exec:java -Dexec.args=$1
+java -jar target/java-client-1.0-SNAPSHOT-jar-with-dependencies.jar "$@"
