@@ -1,10 +1,19 @@
 hash: 31f2ed8ebb5a211fd6fc5d16a29d5ca42325bbffc401eb8b70e632110a3e7d04
-updated: 2017-06-25T22:29:32.228283985+02:00
+updated: 2017-06-26T09:17:20.80322406+02:00
 imports:
 - name: github.com/beorn7/perks
   version: 4c0e84591b9aa9e6dcfdf3e020114cd81f89d5f9
   subpackages:
   - quantile
+- name: github.com/coreos/etcd
+  version: 703663d1f6ed070ab83b01386f0b023091c5e016
+  subpackages:
+  - auth/authpb
+  - clientv3
+  - clientv3/naming
+  - etcdserver/api/v3rpc/rpctypes
+  - etcdserver/etcdserverpb
+  - mvcc/mvccpb
 - name: github.com/go-kit/kit
   version: a9ca6725cbbea455e61c6bc8a1ed28e81eb3493b
   subpackages:
@@ -37,6 +46,8 @@ imports:
   version: 7696a7e8a7ae43a57c6f634b27aa28936bc7431b
   subpackages:
   - pb
+- name: github.com/olivere/randport
+  version: b511dd6722ef78a8a347731008be5bd568fc8a63
 - name: github.com/opentracing/opentracing-go
   version: eaaf4e1eeb7a5373b38e70901270c83577dc6fb9
   subpackages:

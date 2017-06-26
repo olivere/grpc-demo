@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/coreos/etcd/clientv3"
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	"golang.org/x/net/context"
@@ -18,6 +19,7 @@ import (
 
 // tickerCommand executes the streaming Ticker RPC.
 type tickerCommand struct {
+	disco      string
 	addr       string
 	tls        bool
 	serverName string
@@ -33,6 +35,7 @@ type tickerCommand struct {
 func init() {
 	RegisterCommand("ticker", func(flags *flag.FlagSet) Command {
 		cmd := new(tickerCommand)
+		flags.StringVar(&cmd.disco, "disco", envString("DISCO", ""), "Service discovery mechanism (blank or etcd)")
 		flags.StringVar(&cmd.addr, "addr", ":10000", "Server address")
 		flags.BoolVar(&cmd.tls, "tls", false, "Enable TLS")
 		flags.StringVar(&cmd.serverName, "serverName", "", "Server to check the certificate")
@@ -52,13 +55,14 @@ func (cmd *tickerCommand) Describe() string {
 }
 
 func (cmd *tickerCommand) Usage() {
-	fmt.Fprintf(os.Stderr, "Usage: %s ticker [-addr=...] [-tls=...] [-serverName=...] [-cert=...] [-key=...] [--ticker=...]\n", os.Args[0])
+	fmt.Fprintf(os.Stderr, "Usage: %s ticker [-disco=...] [-addr=...] [-tls=...] [-serverName=...] [-cert=...] [-key=...] [--ticker=...]\n", os.Args[0])
 }
 
 func (cmd *tickerCommand) Examples() []string {
 	return []string{
 		fmt.Sprintf("%s ticker -addr=localhost:10000 -interval=5s", os.Args[0]),
 		fmt.Sprintf("%s ticker -interval=5s -tz=Europe/London", os.Args[0]),
+		fmt.Sprintf("%s ticker -disco=etcd", os.Args[0]),
 	}
 }
 
@@ -73,6 +77,14 @@ func (cmd *tickerCommand) Run(args []string) error {
 	if cmd.qps > 0 && cmd.burst > 0 {
 		limiter := rate.NewLimiter(rate.Limit(cmd.qps), cmd.burst)
 		options = append(options, SetRateLimiter(limiter))
+	}
+	switch cmd.disco {
+	case "etcd":
+		etcdcli, err := clientv3.NewFromURL("http://localhost:2379")
+		if err != nil {
+			return err
+		}
+		options = append(options, SetEtcdClient(etcdcli))
 	}
 	client, err := NewClient(options...)
 	if err != nil {

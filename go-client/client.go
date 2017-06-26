@@ -1,16 +1,20 @@
 package main
 
 import (
+	"github.com/coreos/etcd/clientv3"
+	etcdnaming "github.com/coreos/etcd/clientv3/naming"
 	grpcretry "github.com/grpc-ecosystem/go-grpc-middleware/retry"
 	grpcprom "github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 	"golang.org/x/time/rate"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 
+	"time"
+
 	pb "github.com/olivere/grpc-demo/pb"
-	"google.golang.org/grpc/codes"
 )
 
 type Client struct {
@@ -23,6 +27,7 @@ type Client struct {
 	caFile     string
 	limiter    *rate.Limiter
 	maxRetries uint
+	etcdcli    *clientv3.Client
 }
 
 type ClientOption func(*Client)
@@ -35,6 +40,7 @@ func NewClient(options ...ClientOption) (*Client, error) {
 		caFile:     "",
 		limiter:    rate.NewLimiter(rate.Limit(1000), 10),
 		maxRetries: 5,
+		etcdcli:    nil,
 	}
 	for _, option := range options {
 		option(client)
@@ -73,9 +79,25 @@ func NewClient(options ...ClientOption) (*Client, error) {
 	opts = append(opts, grpc.WithUnaryInterceptor(grpcprom.UnaryClientInterceptor))
 	opts = append(opts, grpc.WithStreamInterceptor(grpcprom.StreamClientInterceptor))
 
-	conn, err := grpc.Dial(client.addr, opts...)
-	if err != nil {
-		return nil, errors.Wrapf(err, "cannot connect to %s", client.addr)
+	var err error
+	var conn *grpc.ClientConn
+	if client.etcdcli != nil {
+		// Service name is "grpc-demo-example"... hard-coded. It must match the service-side.
+		resolver := &etcdnaming.GRPCResolver{Client: client.etcdcli}
+		balancer := grpc.RoundRobin(resolver)
+		opts = append(opts, grpc.WithBalancer(balancer))
+		opts = append(opts, grpc.WithBlock()) // see https://github.com/coreos/etcd/issues/7821
+		opts = append(opts, grpc.WithTimeout(60*time.Second))
+		conn, err = grpc.Dial("grpc-demo-example", opts...)
+		if err != nil {
+			return nil, errors.Wrap(err, "cannot connect to etcd service")
+		}
+	} else {
+		// No client-side load balancing
+		conn, err = grpc.Dial(client.addr, opts...)
+		if err != nil {
+			return nil, errors.Wrapf(err, "cannot connect to %s", client.addr)
+		}
 	}
 	client.conn = conn
 
@@ -121,6 +143,14 @@ func SetRateLimiter(limiter *rate.Limiter) ClientOption {
 func SetMaxRetries(maxRetries uint) ClientOption {
 	return func(client *Client) {
 		client.maxRetries = maxRetries
+	}
+}
+
+// SetEtcdClient sets the etcd client to use for service discovery.
+// If it is non-nil, it means we use etcd.
+func SetEtcdClient(etcdcli *clientv3.Client) ClientOption {
+	return func(client *Client) {
+		client.etcdcli = etcdcli
 	}
 }
 

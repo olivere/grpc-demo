@@ -12,11 +12,13 @@ import (
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/time/rate"
 
+	"github.com/coreos/etcd/clientv3"
 	pb "github.com/olivere/grpc-demo/pb"
 )
 
 // helloCommand executes the Hello RPC.
 type helloCommand struct {
+	disco      string
 	addr       string
 	tls        bool
 	serverName string
@@ -31,6 +33,7 @@ type helloCommand struct {
 func init() {
 	RegisterCommand("hello", func(flags *flag.FlagSet) Command {
 		cmd := new(helloCommand)
+		flags.StringVar(&cmd.disco, "disco", envString("DISCO", ""), "Service discovery mechanism (blank or etcd)")
 		flags.StringVar(&cmd.addr, "addr", ":10000", "Host and port to bind to")
 		flags.BoolVar(&cmd.tls, "tls", false, "Enable TLS")
 		flags.StringVar(&cmd.serverName, "serverName", "", "Server to check the certificate")
@@ -49,14 +52,16 @@ func (cmd *helloCommand) Describe() string {
 }
 
 func (cmd *helloCommand) Usage() {
-	fmt.Fprintf(os.Stderr, "Usage: %s hello [-addr=...] [-tls=...] [-serverName=...] [-cert=...] [-key=...]\n", os.Args[0])
+	fmt.Fprintf(os.Stderr, "Usage: %s hello [-disco=...] [-addr=...] [-tls=...] [-serverName=...] [-cert=...] [-key=...]\n", os.Args[0])
 }
 
-/*
 func (cmd *helloCommand) Examples() []string {
-	return []string{}
+	return []string{
+		fmt.Sprintf("%s hello", os.Args[0]),
+		fmt.Sprintf("%s hello -addr=localhost:10000", os.Args[0]),
+		fmt.Sprintf("%s hello -disco=etcd", os.Args[0]),
+	}
 }
-*/
 
 func (cmd *helloCommand) Run(args []string) error {
 	options := []ClientOption{
@@ -69,6 +74,14 @@ func (cmd *helloCommand) Run(args []string) error {
 	if cmd.qps > 0 && cmd.burst > 0 {
 		limiter := rate.NewLimiter(rate.Limit(cmd.qps), cmd.burst)
 		options = append(options, SetRateLimiter(limiter))
+	}
+	switch cmd.disco {
+	case "etcd":
+		etcdcli, err := clientv3.NewFromURL("http://localhost:2379")
+		if err != nil {
+			return err
+		}
+		options = append(options, SetEtcdClient(etcdcli))
 	}
 	client, err := NewClient(options...)
 	if err != nil {

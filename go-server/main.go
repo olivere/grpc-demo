@@ -3,27 +3,38 @@ package main
 //go:generate protoc -I ../pb/ ../pb/example.proto --go_out=plugins=grpc:../pb
 
 import (
+	"context"
 	"flag"
 	stdlog "log"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 
+	"github.com/coreos/etcd/clientv3"
+	etcdnaming "github.com/coreos/etcd/clientv3/naming"
 	"github.com/go-kit/kit/log"
 	grpcmw "github.com/grpc-ecosystem/go-grpc-middleware"
 	grpcauth "github.com/grpc-ecosystem/go-grpc-middleware/auth"
 	grpcopentracing "github.com/grpc-ecosystem/go-grpc-middleware/tracing/opentracing"
 	grpcprom "github.com/grpc-ecosystem/go-grpc-prometheus"
+	"github.com/olivere/randport"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/soheilhy/cmux"
 	"golang.org/x/time/rate"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/grpclog"
+	"google.golang.org/grpc/naming"
 
 	pb "github.com/olivere/grpc-demo/pb"
+)
+
+const (
+	// serviceName is the name under which the server is registered in client-side load balancers.
+	serviceName = "grpc-demo-example"
 )
 
 var (
@@ -34,9 +45,18 @@ var (
 	_ = cmux.Any
 )
 
+func envString(name, defaults string) string {
+	v := os.Getenv(name)
+	if v != "" {
+		return v
+	}
+	return defaults
+}
+
 func main() {
 	var (
-		addr     = flag.String("addr", ":10000", "Host and port to bind to")
+		disco    = flag.String("disco", envString("DISCO", ""), "Service discovery mechanism (blank or etcd)")
+		addr     = flag.String("addr", envString("ADDR", "localhost:10000"), "Host and port to bind to")
 		tls      = flag.Bool("tls", false, "Enabled TLS")
 		certFile = flag.String("cert", "", "Certificate file")
 		keyFile  = flag.String("key", "", "Key file")
@@ -52,13 +72,48 @@ func main() {
 	stdlog.SetOutput(log.NewStdlibAdapter(logger))
 	grpclog.SetLogger(grpcLogger{logger})
 
+	// Configure host and port
+	host, portStr, err := net.SplitHostPort(*addr)
+	if err != nil {
+		logger.Log("msg", "Cannot split host and port", "addr", *addr, "err", err)
+		os.Exit(1)
+	}
+	port, _ := strconv.Atoi(portStr)
+	if port == 0 {
+		port = randport.Get()
+		*addr = net.JoinHostPort(host, strconv.Itoa(port))
+	}
+
+	// Create server
 	srv := NewServer(logger)
 
+	// Create listener
 	lis, err := net.Listen("tcp", *addr)
 	if err != nil {
 		logger.Log("msg", "Listen failed", "err", err)
 		os.Exit(1)
 	}
+
+	// Service discovery mechanism
+	switch *disco {
+	case "etcd":
+		etcdcli, err := clientv3.NewFromURL("http://localhost:2379")
+		if err != nil {
+			logger.Log("msg", "Cannot connect to etcd", "err", err)
+			os.Exit(1)
+		}
+		// Register in etcd
+		resolver := &etcdnaming.GRPCResolver{Client: etcdcli}
+		err = resolver.Update(context.Background(), serviceName, naming.Update{Op: naming.Add, Addr: *addr})
+		if err != nil {
+			logger.Log("msg", "Cannot register service in etcd", "service", serviceName, "addr", *addr, "err", err)
+			os.Exit(1)
+		}
+		// Unregister when done
+		defer resolver.Update(context.Background(), serviceName, naming.Update{Op: naming.Delete, Addr: *addr})
+	}
+
+	// Server options
 	var opts []grpc.ServerOption
 	if *tls {
 		creds, err := credentials.NewServerTLSFromFile(*certFile, *keyFile)
@@ -94,7 +149,6 @@ func main() {
 	grpcServer := grpc.NewServer(opts...)
 	pb.RegisterExampleServer(grpcServer, srv)
 	grpcprom.Register(grpcServer)
-
 	http.Handle("/metrics", prometheus.Handler())
 
 	// Multiplex connections
@@ -125,7 +179,7 @@ func main() {
 		errc <- nil
 	}()
 
-	logger.Log("msg", "Server started")
+	logger.Log("msg", "Server started", "addr", *addr, "disco", *disco)
 
 	if err := <-errc; err != nil {
 		logger.Log("msg", "Exit with failure", "err", err)
