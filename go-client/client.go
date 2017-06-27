@@ -12,7 +12,8 @@ import (
 	etcdnaming "github.com/coreos/etcd/clientv3/naming"
 	grpcretry "github.com/grpc-ecosystem/go-grpc-middleware/retry"
 	grpcprom "github.com/grpc-ecosystem/go-grpc-prometheus"
-	"github.com/olivere/grpc/lb"
+	"github.com/olivere/grpc/lb/healthz"
+	"github.com/olivere/grpc/lb/static"
 	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 	"golang.org/x/time/rate"
@@ -132,7 +133,7 @@ func NewClient(options ...ClientOption) (*Client, error) {
 			addrs := strings.Split(client.addr, ",")
 			if len(addrs) > 1 {
 				addr = ""
-				r := lb.NewStaticResolver(addrs...)
+				r := static.NewResolver(addrs...)
 				b := grpc.RoundRobin(r)
 				opts = append(opts, grpc.WithBalancer(b))
 			}
@@ -165,19 +166,19 @@ func (c *Client) healthzResolver() (naming.Resolver, error) {
 			"you passed %d gRPC endpoints but have %d healthcheck URLs", want, have)
 	}
 
-	var endpoints []lb.HealthzEndpoint
+	var endpoints []healthz.Endpoint
 	for i, addr := range addrs {
 		healthcheckURL := c.healthchecks[i]
 		if _, err := url.Parse(healthcheckURL); err != nil {
 			return nil, errors.Wrapf(err, "invalid URL: %s", healthcheckURL)
 		}
-		endpoints = append(endpoints, lb.HealthzEndpoint{
+		endpoints = append(endpoints, healthz.Endpoint{
 			Addr:     addr,
 			CheckURL: healthcheckURL,
 		})
 	}
 
-	r, err := lb.NewHealthzResolver(endpoints...)
+	r, err := healthz.NewResolver(healthz.SetEndpoints(endpoints...))
 	if err != nil {
 		return nil, errors.Wrap(err, "error creating healthz resolver")
 	}

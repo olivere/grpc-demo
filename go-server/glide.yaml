@@ -1,18 +1,23 @@
 package: github.com/olivere/grpc-demo/go-server
 import:
+- package: github.com/coreos/etcd
+  version: ^3.2.1
+  subpackages:
+  - clientv3
+  - clientv3/naming
 - package: github.com/go-kit/kit
   version: ^0.5.0
   subpackages:
   - log
+- package: github.com/gorilla/mux
+  version: ^1.4.0
 - package: github.com/grpc-ecosystem/go-grpc-middleware
   subpackages:
   - auth
   - tracing/opentracing
 - package: github.com/grpc-ecosystem/go-grpc-prometheus
   version: ^1.1.0
-- package: github.com/olivere/grpc-demo
-  subpackages:
-  - pb
+- package: github.com/olivere/randport
 - package: github.com/prometheus/client_golang
   version: ^0.8.0
   subpackages:
@@ -29,8 +34,8 @@ import:
   version: ^1.4.2
   subpackages:
   - codes
-  - credentials
   - grpclog
   - metadata
+  - naming
   - status
   - tap

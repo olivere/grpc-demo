@@ -1,12 +1,12 @@
-hash: 31f2ed8ebb5a211fd6fc5d16a29d5ca42325bbffc401eb8b70e632110a3e7d04
-updated: 2017-06-26T09:17:20.80322406+02:00
+hash: 76a325b07a264ae17a9272ea2e7d2b8886a2bcf65ae9053835fac7c8fca26ae1
+updated: 2017-06-27T18:35:55.945468781+02:00
 imports:
 - name: github.com/beorn7/perks
   version: 4c0e84591b9aa9e6dcfdf3e020114cd81f89d5f9
   subpackages:
   - quantile
 - name: github.com/coreos/etcd
-  version: 703663d1f6ed070ab83b01386f0b023091c5e016
+  version: 61fc123e7a8b14a0a258aa3f5c4159861b1ec2e7
   subpackages:
   - auth/authpb
   - clientv3
@@ -23,10 +23,15 @@ imports:
 - name: github.com/go-stack/stack
   version: 7a2f19628aabfe68f0766b59e74d6315f8347d22
 - name: github.com/golang/protobuf
-  version: b50ceb1fa9818fa4d78b016c2d4ae025593a7ce3
+  version: 4bd1920723d7b7c925de087aa32e2187708897f7
   subpackages:
+  - jsonpb
   - proto
   - ptypes/any
+- name: github.com/gorilla/context
+  version: 08b5f424b9271eedf6f9f0ce86cb9396ed337a42
+- name: github.com/gorilla/mux
+  version: bcd8bc72b08df0f70df986b97f95590779502d31
 - name: github.com/grpc-ecosystem/go-grpc-middleware
   version: f63a7dfb64c138bd93d5c5b896d8b33c4b08e000
   subpackages:
@@ -43,7 +48,7 @@ imports:
   subpackages:
   - pbutil
 - name: github.com/olivere/grpc-demo
-  version: 7696a7e8a7ae43a57c6f634b27aa28936bc7431b
+  version: e33f2dff444b664669986cb599463c64b17c455a
   subpackages:
   - pb
 - name: github.com/olivere/randport
@@ -62,19 +67,19 @@ imports:
   subpackages:
   - go
 - name: github.com/prometheus/common
-  version: 13ba4ddd0caa9c28ca7b7bffe1dfa9ed8d5ef207
+  version: 49fee292b27bfff7f354ee0f64e1bc4850462edf
   subpackages:
   - expfmt
   - internal/bitbucket.org/ww/goautoneg
   - model
 - name: github.com/prometheus/procfs
-  version: d098ca18df8bc825079013daf7bacefbb1ee877e
+  version: a1dba9ce8baed984a2495b658c82687f8157b98f
   subpackages:
   - xfs
 - name: github.com/soheilhy/cmux
   version: bf4a8ede9e87c006fe1d4278c6c7f2b8be1fa84c
 - name: golang.org/x/net
-  version: c9b681d35165f1995d6f3034e61f8761d4b90c99
+  version: c8c74377599bd978aee1cf3b9b63a8634051cec2
   subpackages:
   - context
   - http2
@@ -84,7 +89,7 @@ imports:
   - lex/httplex
   - trace
 - name: golang.org/x/text
-  version: 470f45bf29f4147d6fbd7dfd0a02a848e49f5bf4
+  version: 6353ef0f924300eea566d3438817aa4d3374817e
   subpackages:
   - secure/bidirule
   - transform
@@ -95,7 +100,7 @@ imports:
   subpackages:
   - rate
 - name: google.golang.org/genproto
-  version: 411e09b969b1170a9f0c467558eb4c4c110d9c77
+  version: aa2eb687b4d3e17154372564ad8d6bf11c3cf21f
   subpackages:
   - googleapis/rpc/status
 - name: google.golang.org/grpc
