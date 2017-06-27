@@ -28,7 +28,8 @@ ef = OpenSSL::X509::ExtensionFactory.new
 ef.subject_certificate = ef.issuer_certificate = cert
 
 cert.extensions = [
-  ef.create_extension("basicConstraints","CA:FALSE", true),
+  # Set to CA:FALSE if you don't want this cert to "be" a CA
+  ef.create_extension("basicConstraints","CA:TRUE", true),
   ef.create_extension("subjectKeyIdentifier", "hash")
 ]
 cert.add_extension ef.create_extension("authorityKeyIdentifier",

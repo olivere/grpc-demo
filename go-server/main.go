@@ -5,7 +5,9 @@ package main
 import (
 	"context"
 	tlspkg "crypto/tls"
+	"crypto/x509"
 	"flag"
+	"io/ioutil"
 	stdlog "log"
 	"net"
 	"net/http"
@@ -29,6 +31,8 @@ import (
 	"google.golang.org/grpc/grpclog"
 	"google.golang.org/grpc/naming"
 
+	"github.com/gorilla/mux"
+	"github.com/olivere/grpc-demo/go-server/health"
 	pb "github.com/olivere/grpc-demo/pb"
 )
 
@@ -114,6 +118,7 @@ func main() {
 	}
 
 	// Server options
+	var pool *x509.CertPool
 	var cert tlspkg.Certificate
 	var opts []grpc.ServerOption
 	if *tls {
@@ -123,6 +128,16 @@ func main() {
 			logger.Log("msg", "Cannot load certificate", "err", err)
 			os.Exit(1)
 		}
+
+		// Create pool to trust
+		caCert, err := ioutil.ReadFile(*certFile)
+		if err != nil {
+			logger.Log("msg", "Cannot load certificate", "err", err)
+			os.Exit(1)
+		}
+		pool = x509.NewCertPool()
+		pool.AppendCertsFromPEM(caCert)
+
 		// We don't need the instruct gRPC to do TLS because we are using cmux to proxy TLS
 		// creds := credentials.NewServerTLSFromCert(&cert)
 		// opts = append(opts, grpc.Creds(creds))
@@ -154,8 +169,6 @@ func main() {
 	pb.RegisterExampleServer(grpcServer, srv)
 	grpcprom.Register(grpcServer)
 
-	http.Handle("/metrics", prometheus.Handler())
-
 	// Multiplex connections
 	//
 	// We have two modes of operating. When TLS is enabled, we serve both gRPC and
@@ -169,12 +182,17 @@ func main() {
 	if *tls {
 		tlscfg := &tlspkg.Config{
 			Certificates: []tlspkg.Certificate{cert},
+			RootCAs:      pool,
 		}
 		lis = tlspkg.NewListener(lis, tlscfg)
 	}
 	tcpmux := cmux.New(lis)
 	httplis := tcpmux.Match(cmux.HTTP1Fast())
+	// grpclis := tcpmux.Match(cmux.HTTP2HeaderField("content-type", "application/grpc"))
+	// httplis := tcpmux.Match(cmux.Any())
 	grpclis := tcpmux.Match(cmux.Any())
+	// _ = httplis
+	// _ = grpclis
 
 	errc := make(chan error, 1)
 
@@ -190,8 +208,27 @@ func main() {
 
 	// HTTP listener
 	go func() {
+		r := mux.NewRouter()
+
+		// Health endpoints
+		r.HandleFunc("/healthz", health.HealthzHandler)
+		r.HandleFunc("/healthz/status", health.ToggleHealthzStatusHandler)
+		r.HandleFunc("/readiness", health.ReadinessHandler)
+		r.HandleFunc("/readiness/status", health.ToggleHealthzStatusHandler)
+		defer func() {
+			health.SetHealtzStatus(http.StatusServiceUnavailable)
+			health.SetReadinessStatus(http.StatusServiceUnavailable)
+		}()
+		r.NotFoundHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			logger.Log("msg", "unmatched HTTP request", "url", r.RequestURI)
+		})
+
+		// Metrics endpoints
+		r.Handle("/metrics", prometheus.Handler())
+
 		httpsrv := &http.Server{
-			Addr: *addr,
+			Addr:    *addr,
+			Handler: r,
 		}
 		err := httpsrv.Serve(httplis)
 		if err != cmux.ErrListenerClosed {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/coreos/etcd/clientv3"
@@ -19,17 +20,19 @@ import (
 
 // tickerCommand executes the streaming Ticker RPC.
 type tickerCommand struct {
-	disco      string
-	addr       string
-	tls        bool
-	serverName string
-	caFile     string
-	interval   time.Duration
-	timezone   string
-	qps        float64
-	burst      int
-	maxRetries uint
-	parallel   int
+	disco       string
+	addr        string
+	healthcheck string
+	tls         bool
+	serverName  string
+	caFile      string
+	interval    time.Duration
+	timezone    string
+	qps         float64
+	burst       int
+	maxRetries  uint
+	parallel    int
+	forever     time.Duration
 }
 
 func init() {
@@ -37,6 +40,7 @@ func init() {
 		cmd := new(tickerCommand)
 		flags.StringVar(&cmd.disco, "disco", envString("DISCO", ""), "Service discovery mechanism (blank or etcd)")
 		flags.StringVar(&cmd.addr, "addr", ":10000", "Server address")
+		flags.StringVar(&cmd.healthcheck, "healthcheck", "", "Comma-separated list of healthchecks for each gRPC endpoint")
 		flags.BoolVar(&cmd.tls, "tls", false, "Enable TLS")
 		flags.StringVar(&cmd.serverName, "serverName", "", "Server to check the certificate")
 		flags.StringVar(&cmd.caFile, "caFile", "", "Certificate file in e.g. PEM format")
@@ -46,6 +50,7 @@ func init() {
 		flags.IntVar(&cmd.burst, "burst", 0, "Rate limiter bursts")
 		flags.UintVar(&cmd.maxRetries, "retries", 5, "Number of retries when hitting rate limits")
 		flags.IntVar(&cmd.parallel, "parallel", 1, "Number of requests to send in parallel (e.g. to test rate limiting)")
+		flags.DurationVar(&cmd.forever, "t", -1, "Repeat the requests forever")
 		return cmd
 	})
 }
@@ -78,6 +83,10 @@ func (cmd *tickerCommand) Run(args []string) error {
 		limiter := rate.NewLimiter(rate.Limit(cmd.qps), cmd.burst)
 		options = append(options, SetRateLimiter(limiter))
 	}
+	healhcheckURLs := strings.Split(cmd.healthcheck, ",")
+	if len(healhcheckURLs) > 1 {
+		options = append(options, SetHealthcheckURL(healhcheckURLs...))
+	}
 	switch cmd.disco {
 	case "etcd":
 		etcdcli, err := clientv3.NewFromURL("http://localhost:2379")
@@ -92,38 +101,49 @@ func (cmd *tickerCommand) Run(args []string) error {
 	}
 	defer client.Close()
 
-	ctx := context.Background()
-	// Set user
-	ctx = setUser(ctx, uuid.New().String())
-
 	if cmd.parallel <= 0 {
 		cmd.parallel = 1
 	}
 
-	g, ctx := errgroup.WithContext(ctx)
+	for {
+		ctx := context.Background()
+		// Set user
+		ctx = setUser(ctx, uuid.New().String())
 
-	for i := 0; i < cmd.parallel; i++ {
-		g.Go(func() error {
-			req := &pb.TickerRequest{
-				Timezone: cmd.timezone,
-				Interval: cmd.interval.Nanoseconds(),
-			}
-			stream, err := client.Ticker(ctx, req)
-			if err != nil {
-				return errors.Wrap(err, "initiate stream")
-			}
-			for {
-				res, err := stream.Recv()
-				if err == io.EOF {
-					break
+		g, ctx := errgroup.WithContext(ctx)
+
+		for i := 0; i < cmd.parallel; i++ {
+			g.Go(func() error {
+				req := &pb.TickerRequest{
+					Timezone: cmd.timezone,
+					Interval: cmd.interval.Nanoseconds(),
 				}
+				stream, err := client.Ticker(ctx, req)
 				if err != nil {
-					return errors.Wrap(err, "unexpected stream error")
+					return errors.Wrap(err, "initiate stream")
 				}
-				fmt.Println(res.Tick)
+				for {
+					res, err := stream.Recv()
+					if err == io.EOF {
+						break
+					}
+					if err != nil {
+						return errors.Wrap(err, "unexpected stream error")
+					}
+					fmt.Println(res.Tick)
+				}
+				return nil
+			})
+		}
+
+		err := g.Wait()
+		if cmd.forever.Seconds() > 0 {
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "%v\n", err)
 			}
-			return nil
-		})
+			time.Sleep(cmd.forever)
+			continue
+		}
+		return err
 	}
-	return g.Wait()
 }

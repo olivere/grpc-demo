@@ -13,22 +13,26 @@ import (
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/time/rate"
 
+	"strings"
+
 	"github.com/coreos/etcd/clientv3"
 	pb "github.com/olivere/grpc-demo/pb"
 )
 
 // helloCommand executes the Hello RPC.
 type helloCommand struct {
-	disco      string
-	addr       string
-	tls        bool
-	serverName string
-	caFile     string
-	timeout    time.Duration
-	qps        float64
-	burst      int
-	maxRetries uint
-	parallel   int
+	disco       string
+	addr        string
+	healthcheck string
+	tls         bool
+	serverName  string
+	caFile      string
+	timeout     time.Duration
+	qps         float64
+	burst       int
+	maxRetries  uint
+	parallel    int
+	forever     time.Duration
 }
 
 func init() {
@@ -36,6 +40,7 @@ func init() {
 		cmd := new(helloCommand)
 		flags.StringVar(&cmd.disco, "disco", envString("DISCO", ""), "Service discovery mechanism (blank or etcd)")
 		flags.StringVar(&cmd.addr, "addr", ":10000", "Host and port to bind to")
+		flags.StringVar(&cmd.healthcheck, "healthcheck", "", "Comma-separated list of healthchecks for each gRPC endpoint")
 		flags.BoolVar(&cmd.tls, "tls", false, "Enable TLS")
 		flags.StringVar(&cmd.serverName, "serverName", "", "Server to check the certificate")
 		flags.StringVar(&cmd.caFile, "caFile", "", "Certificate file in e.g. PEM format")
@@ -44,6 +49,7 @@ func init() {
 		flags.IntVar(&cmd.burst, "burst", 0, "Rate limiter bursts")
 		flags.UintVar(&cmd.maxRetries, "retries", 5, "Number of retries when hitting rate limits")
 		flags.IntVar(&cmd.parallel, "parallel", 1, "Number of requests to send in parallel (e.g. to test rate limiting)")
+		flags.DurationVar(&cmd.forever, "t", -1, "Repeat the requests forever")
 		return cmd
 	})
 }
@@ -61,6 +67,7 @@ func (cmd *helloCommand) Examples() []string {
 		fmt.Sprintf("%s hello", os.Args[0]),
 		fmt.Sprintf("%s hello -addr=localhost:10000", os.Args[0]),
 		fmt.Sprintf("%s hello -disco=etcd", os.Args[0]),
+		fmt.Sprintf("%s hello -addr=localhost:10000,localhost:10001 -healthcheck=http://localhost:10000/healthz,http://localhost:10001/healthz", os.Args[0]),
 	}
 }
 
@@ -76,6 +83,10 @@ func (cmd *helloCommand) Run(args []string) error {
 		limiter := rate.NewLimiter(rate.Limit(cmd.qps), cmd.burst)
 		options = append(options, SetRateLimiter(limiter))
 	}
+	healhcheckURLs := strings.Split(cmd.healthcheck, ",")
+	if len(healhcheckURLs) > 1 {
+		options = append(options, SetHealthcheckURL(healhcheckURLs...))
+	}
 	switch cmd.disco {
 	case "etcd":
 		etcdcli, err := clientv3.NewFromURL("http://localhost:2379")
@@ -90,37 +101,48 @@ func (cmd *helloCommand) Run(args []string) error {
 	}
 	defer client.Close()
 
-	ctx := context.Background()
-	// Set user
-	ctx = setUser(ctx, uuid.New().String())
-	// Add timeout
-	ctx, cancel := context.WithTimeout(ctx, cmd.timeout)
-	defer cancel()
-
 	if cmd.parallel <= 0 {
 		cmd.parallel = 1
 	}
 
-	g, ctx := errgroup.WithContext(ctx)
+	for {
+		ctx := context.Background()
+		// Set user
+		ctx = setUser(ctx, uuid.New().String())
+		// Add timeout
+		ctx, cancel := context.WithTimeout(ctx, cmd.timeout)
+		defer cancel()
 
-	for i := 0; i < cmd.parallel; i++ {
-		g.Go(func() error {
-			req := &pb.HelloRequest{
-				Name:   names[rand.Intn(len(names))],
-				Age:    int32(20 + rand.Intn(20)),
-				Nanos:  time.Now().UnixNano(),
-				Gender: randomGender(),
-			}
-			res, err := client.Hello(ctx, req)
+		g, ctx := errgroup.WithContext(ctx)
+
+		for i := 0; i < cmd.parallel; i++ {
+			g.Go(func() error {
+				req := &pb.HelloRequest{
+					Name:   names[rand.Intn(len(names))],
+					Age:    int32(20 + rand.Intn(20)),
+					Nanos:  time.Now().UnixNano(),
+					Gender: randomGender(),
+				}
+				res, err := client.Hello(ctx, req)
+				if err != nil {
+					return errors.Wrap(err, "cannot execute Hello request")
+				}
+				fmt.Println(res.Message)
+				return nil
+			})
+		}
+
+		err := g.Wait()
+		if cmd.forever.Seconds() > 0 {
 			if err != nil {
-				return errors.Wrap(err, "cannot execute Hello request")
+				fmt.Fprintf(os.Stderr, "%v\n", err)
 			}
-			fmt.Println(res.Message)
-			return nil
-		})
+			cancel()
+			time.Sleep(cmd.forever)
+			continue
+		}
+		return err
 	}
-
-	return g.Wait()
 }
 
 func randomGender() pb.Gender {
