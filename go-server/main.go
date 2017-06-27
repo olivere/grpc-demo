@@ -260,6 +260,7 @@ func main() {
 		"qps", *qps,
 		"burst", *burst,
 	)
+	defer logger.Log("msg", "Server stopped")
 
 	// Wait for completion
 	if err := <-errc; err != nil {
